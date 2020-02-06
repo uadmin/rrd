@@ -5,14 +5,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type RRD struct {
-	DS   []DS
-	RRA  []RRA
-	Step int
+	DS    []DS
+	RRA   []RRA
+	Step  int
+	Start interface{}
 }
 
 type DS struct {
@@ -61,12 +63,18 @@ type GraphCommand struct {
 	Value string
 }
 
-func UpdateRRD(filename string, length int, values ...interface{}) error {
+func UpdateRRDWithDate(filename string, length int, date *time.Time, values ...interface{}) error {
 	path := filename
 	if path[0] != '/' {
 		path = "./" + path
 	}
-	counters := []string{"N"}
+
+	timeStamp := "N"
+	if date != nil {
+		timeStamp = fmt.Sprint(date.Unix())
+	}
+
+	counters := []string{timeStamp}
 	for i := 0; i < length; i++ {
 		if len(values) > i {
 			counters = append(counters, fmt.Sprint(values[i]))
@@ -93,6 +101,10 @@ func UpdateRRD(filename string, length int, values ...interface{}) error {
 	return nil
 }
 
+func UpdateRRD(filename string, length int, values ...interface{}) error {
+	return UpdateRRDWithDate(filename, length, nil, values...)
+}
+
 func CreateRRD(filename string, rrd RRD) error {
 	path := filename
 	if _, err := os.Stat(path); err == nil {
@@ -103,6 +115,9 @@ func CreateRRD(filename string, rrd RRD) error {
 		path,
 		"--step",
 		fmt.Sprint(rrd.Step),
+	}
+	if rrd.Start != nil {
+		args = append(args, "--start", fmt.Sprint(rrd.Start))
 	}
 	for _, v := range rrd.DS {
 		if v.Max == 0 {
@@ -122,6 +137,84 @@ func CreateRRD(filename string, rrd RRD) error {
 		return fmt.Errorf("Unable to update RRD file %s. output:(%s) err (%s)", path, string(b), err)
 	}
 	return nil
+}
+
+func FetchRRD(filename string, from interface{}, to interface{}, step interface{}) ([]time.Time, [][]float64, error) {
+	dateList := []time.Time{}
+	valueList := [][]float64{}
+
+	path := filename
+	if _, err := os.Stat(path); err != nil {
+		return dateList, valueList, fmt.Errorf("File not found (%s)", path)
+	}
+
+	args := []string{
+		"fetch",
+		filename,
+		"LAST",
+	}
+	if from != nil {
+		if val, ok := from.(time.Time); ok {
+			from = val.Unix()
+		}
+		if val, ok := from.(*time.Time); ok {
+			from = val.Unix()
+		}
+		args = append(args, "--start", fmt.Sprint(from))
+	}
+	if to != nil {
+		if val, ok := to.(time.Time); ok {
+			to = val.Unix()
+		}
+		if val, ok := to.(*time.Time); ok {
+			to = val.Unix()
+		}
+		args = append(args, "--end", fmt.Sprint(to))
+	}
+	if step != nil {
+		if val, ok := step.(time.Duration); ok {
+			step = val.Seconds()
+		}
+		if val, ok := step.(*time.Duration); ok {
+			step = val.Seconds()
+		}
+		args = append(args, "--resolution", fmt.Sprint(step))
+	}
+
+	// run the command
+	cmd := exec.Command("rrdtool", args...)
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		return dateList, valueList, fmt.Errorf("Unable to update RRD file %s. output:(%s) err (%s)", path, string(b), err)
+	}
+
+	// Parse the results
+	var date int64
+	var o, h, l, c, v, ac, d, s float64
+
+	for i, line := range strings.Split(string(b), "\n") {
+		if i < 2 || line == "" {
+			continue
+		}
+		fmt.Printf("line %d: %s\n", i, line)
+		parts := strings.Split(line, " ")
+		if len(parts) < 9 {
+			continue
+		}
+		date, _ = strconv.ParseInt(parts[0][:len(parts[0])-1], 10, 64)
+		dateList = append(dateList, time.Unix(date, 0))
+		o, _ = strconv.ParseFloat(parts[1], 64)
+		h, _ = strconv.ParseFloat(parts[2], 64)
+		l, _ = strconv.ParseFloat(parts[3], 64)
+		c, _ = strconv.ParseFloat(parts[4], 64)
+		v, _ = strconv.ParseFloat(parts[5], 64)
+		ac, _ = strconv.ParseFloat(parts[6], 64)
+		d, _ = strconv.ParseFloat(parts[7], 64)
+		s, _ = strconv.ParseFloat(parts[8], 64)
+		valueList = append(valueList, []float64{o, h, l, c, v, ac, d, s})
+	}
+
+	return dateList, valueList, nil
 }
 
 func MakeChart(tmpl Graph, from *time.Time, to *time.Time, height int, width int, c map[string][]string, filename string) error {
