@@ -23,6 +23,7 @@ type DS struct {
 	Heartbeat interface{}
 	Min       interface{}
 	Max       interface{}
+	DST       interface{}
 }
 
 type RRA struct {
@@ -120,7 +121,9 @@ func CreateRRD(filename string, rrd RRD) error {
 		args = append(args, "--start", fmt.Sprint(rrd.Start))
 	}
 	for _, v := range rrd.DS {
-		if v.Max == 0 {
+		if v.Type == "COMPUTE" {
+			args = append(args, fmt.Sprintf("DS:%s:%s:%v", v.Name, v.Type, v.DST))
+		} else if v.Max == 0 {
 			args = append(args, fmt.Sprintf("DS:%s:%s:%v:%v:U", v.Name, v.Type, v.Heartbeat, v.Min))
 		} else {
 			args = append(args, fmt.Sprintf("DS:%s:%s:%v:%v:%v", v.Name, v.Type, v.Heartbeat, v.Min, v.Max))
@@ -190,7 +193,7 @@ func FetchRRD(filename string, from interface{}, to interface{}, step interface{
 
 	// Parse the results
 	var date int64
-	var o, h, l, c, v, ac, d, s float64
+	var raw float64
 
 	for i, line := range strings.Split(string(b), "\n") {
 		if i < 2 || line == "" {
@@ -198,20 +201,15 @@ func FetchRRD(filename string, from interface{}, to interface{}, step interface{
 		}
 		fmt.Printf("line %d: %s\n", i, line)
 		parts := strings.Split(line, " ")
-		if len(parts) < 9 {
-			continue
-		}
 		date, _ = strconv.ParseInt(parts[0][:len(parts[0])-1], 10, 64)
 		dateList = append(dateList, time.Unix(date, 0))
-		o, _ = strconv.ParseFloat(parts[1], 64)
-		h, _ = strconv.ParseFloat(parts[2], 64)
-		l, _ = strconv.ParseFloat(parts[3], 64)
-		c, _ = strconv.ParseFloat(parts[4], 64)
-		v, _ = strconv.ParseFloat(parts[5], 64)
-		ac, _ = strconv.ParseFloat(parts[6], 64)
-		d, _ = strconv.ParseFloat(parts[7], 64)
-		s, _ = strconv.ParseFloat(parts[8], 64)
-		valueList = append(valueList, []float64{o, h, l, c, v, ac, d, s})
+		v := []float64{}
+		for _, item := range parts[1:] {
+			raw, _ = strconv.ParseFloat(item, 64)
+			v = append(v, raw)
+		}
+		valueList = append(valueList, v)
+		fmt.Println(v)
 	}
 
 	return dateList, valueList, nil
