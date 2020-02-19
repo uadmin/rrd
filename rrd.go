@@ -154,7 +154,7 @@ func FetchRRD(filename string, from interface{}, to interface{}, step interface{
 	args := []string{
 		"fetch",
 		filename,
-		"LAST",
+		"AVERAGE",
 	}
 	if from != nil {
 		if val, ok := from.(time.Time); ok {
@@ -185,6 +185,7 @@ func FetchRRD(filename string, from interface{}, to interface{}, step interface{
 	}
 
 	// run the command
+	fmt.Println(args)
 	cmd := exec.Command("rrdtool", args...)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
